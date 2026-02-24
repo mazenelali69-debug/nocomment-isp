@@ -5,7 +5,7 @@ const TARGETS = [
   { name: "DNS THGV", ip: "10.0.25.10" },
   { name: "Gateway THGV", ip: "192.168.99.1" },
   { name: "VLAN CCR", ip: "155.15.59.1" },
-  { name: "Cisco IN", ip: "155.15.59.2" },
+  { name: "Radius THGV", ip: "10.0.25.18" },
   { name: "Cisco MAAD", ip: "155.15.59.3" },
   { name: "Aviat Link", ip: "155.15.59.4" },
   { name: "TP-Link Main", ip: "88.88.88.254" },
@@ -694,6 +694,7 @@ const sBand = {
     edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(148,163,184,0.10) inset" },
   },
 };
+
 
 
 

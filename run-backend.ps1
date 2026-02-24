@@ -1,3 +1,4 @@
 ﻿$ErrorActionPreference = "Stop"
-cd "E:\nocomment-isp\backend"
+Set-Location (Join-Path $PSScriptRoot "backend")
 node server.js
+
