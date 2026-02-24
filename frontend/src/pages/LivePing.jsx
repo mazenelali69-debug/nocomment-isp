@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import "./liveping-cards.css";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getToken } from "../auth";
 
 const TARGETS = [
@@ -314,8 +315,7 @@ export default function LivePing() {
           <SumCard k="Loss" v={loss == null ? "--" : `${loss}%`} s={worstLossNode ? `Worst: ${worstLossNode.name}` : `Window N${N}`} band={bandLoss(loss)} />
         </div>
 
-        <div className="noc-grid" style={s.grid}>
-          {sortedTargets.map((t) => (
+        <div className="noc-grid pingGrid" style={s.grid}>{ sortedTargets.map((t) => (
             <Card key={t.ip} item={rows[t.ip]} />
           ))}
         </div>
@@ -694,6 +694,7 @@ const sBand = {
     edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(148,163,184,0.10) inset" },
   },
 };
+
 
 
 
