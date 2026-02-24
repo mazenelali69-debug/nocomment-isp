@@ -1,127 +1,129 @@
-﻿/* ===== Live Ping Cards v3 (fit screen + centered) ===== */
+﻿/* ===== Live Ping Cards v5 (compact + aligned + animated border) ===== */
 
-/* You can tweak this offset if needed (space taken by top bars / header). */
 :root{
-  --lp-offset: 240px;   /* reduce if you still see scroll; increase if content overlaps */
-  --lp-gap: 16px;
-  --lp-card-pad: 14px;
+  --lp-gap: 14px;
+  --lp-pad: 12px;
+  --lp-radius: 16px;
+  --lp-maxw: 1120px;
 }
 
-/* Center the whole grid area nicely */
+/* wrapper */
+.pingGridWrap{
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+/* grid */
 .pingGrid{
-  width: min(1180px, calc(100vw - 80px)); /* keep it centered and not too wide */
+  width: 100%;
+  max-width: var(--lp-maxw);
   margin: 0 auto;
   display: grid;
   gap: var(--lp-gap);
-
-  /* 4 columns on wide screens (8 cards => 2 rows) */
-  grid-template-columns: repeat(4, minmax(240px, 1fr));
-
-  /* Center content inside available area */
-  place-content: center;
-  align-content: center;
-
-  /* Try to fit into viewport (avoid scroll) */
-  min-height: calc(100vh - var(--lp-offset));
+  grid-template-columns: repeat(4, minmax(230px, 1fr));
+  align-content: start;
 }
 
-/* Responsive columns */
 @media (max-width: 1400px){
-  .pingGrid{ width: min(1040px, calc(100vw - 70px)); grid-template-columns: repeat(3, minmax(240px, 1fr)); }
+  .pingGrid{ max-width: 1040px; grid-template-columns: repeat(3, minmax(230px, 1fr)); }
 }
 @media (max-width: 1100px){
-  .pingGrid{ width: min(820px, calc(100vw - 60px)); grid-template-columns: repeat(2, minmax(240px, 1fr)); }
+  .pingGrid{ max-width: 860px; grid-template-columns: repeat(2, minmax(230px, 1fr)); }
 }
 @media (max-width: 720px){
-  .pingGrid{ width: calc(100vw - 36px); grid-template-columns: 1fr; min-height: auto; }
+  .pingGrid{ max-width: none; grid-template-columns: 1fr; }
 }
 
-/* Card base style (applies to any direct child) */
+/* cards (apply to direct children, no JSX refactor needed) */
 .pingGrid > *{
   position: relative;
-  border-radius: 18px;
-  padding: var(--lp-card-pad);
+  border-radius: var(--lp-radius);
+  padding: var(--lp-pad);
   background:
-    radial-gradient(1200px 400px at 20% -10%, rgba(60,140,255,0.18), transparent 55%),
+    radial-gradient(900px 360px at 18% -10%, rgba(60,140,255,0.16), transparent 55%),
     linear-gradient(180deg, rgba(15,24,44,0.92), rgba(10,16,30,0.92));
   border: 1px solid rgba(255,255,255,0.08);
-  box-shadow: 0 14px 34px rgba(0,0,0,0.55);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.52);
   transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
   overflow: hidden;
+
+  /* aligned height */
+  min-height: 235px;
 }
 
-/* Fit height: assume 2 rows when 4 columns (8 cards total) */
-@media (min-width: 1101px){
-  .pingGrid > *{
-    height: calc((100vh - var(--lp-offset) - var(--lp-gap)) / 2);
-  }
-}
-
-/* Fit height: 3 columns means 3 rows for 8 cards */
-@media (max-width: 1400px) and (min-width: 1101px){
-  .pingGrid > *{
-    height: calc((100vh - var(--lp-offset) - (var(--lp-gap) * 2)) / 3);
-  }
-}
-
-/* Fit height: 2 columns means 4 rows for 8 cards */
-@media (max-width: 1100px) and (min-width: 721px){
-  .pingGrid > *{
-    height: calc((100vh - var(--lp-offset) - (var(--lp-gap) * 3)) / 4);
-  }
-}
-
-/* Hover */
-.pingGrid > *:hover{
-  transform: translateY(-4px);
-  box-shadow: 0 20px 44px rgba(0,0,0,0.65);
-  border-color: rgba(255,255,255,0.14);
-}
-
-/* Shine */
-.pingGrid > *::after{
-  content:"";
-  position:absolute;
-  top:-40%;
-  left:-30%;
-  width:60%;
-  height:160%;
-  transform:rotate(22deg);
-  background:linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
-  opacity:.35;
-  transition:opacity .2s ease;
-  pointer-events:none;
-}
-.pingGrid > *:hover::after{ opacity:.55; }
-
-/* Make internal text a bit tighter so content fits */
+/* make inner spacing tighter */
 .pingGrid > *{
   font-size: 12px;
 }
-.pingGrid > * h1,
-.pingGrid > * h2,
-.pingGrid > * h3{
-  font-size: 14px;
-  margin: 0;
-}
-
-/* Optional: if your card contains many rows, reduce vertical spacing */
 .pingGrid > * *{
-  line-height: 1.15;
+  line-height: 1.12;
 }
 
-/* Pills/badges look nicer */
-.pingGrid > * .badge,
-.pingGrid > * .status,
-.pingGrid > * .pill{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:5px 9px;
-  border-radius:999px;
-  background:rgba(255,255,255,0.06);
-  border:1px solid rgba(255,255,255,0.10);
-  font-size:11px;
-  color:rgba(255,255,255,0.85);
-  white-space:nowrap;
+/* hover */
+.pingGrid > *:hover{
+  transform: translateY(-3px);
+  box-shadow: 0 18px 38px rgba(0,0,0,0.62);
+  border-color: rgba(255,255,255,0.14);
 }
+
+/* animated "runner line" around the card */
+.pingGrid > *::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius: var(--lp-radius);
+  padding: 1.2px;
+
+  background: conic-gradient(
+    from 0deg,
+    rgba(0,255,170,0.00),
+    rgba(0,255,170,0.85),
+    rgba(90,140,255,0.65),
+    rgba(0,255,170,0.00)
+  );
+
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+
+  opacity: .65;
+  filter: blur(0.2px);
+  animation: lpSpin 2.2s linear infinite;
+  pointer-events:none;
+}
+
+/* subtle glow inside */
+.pingGrid > *::after{
+  content:"";
+  position:absolute;
+  inset:-40%;
+  background: radial-gradient(circle at 30% 20%, rgba(0,255,170,0.10), transparent 55%);
+  transform: translateZ(0);
+  opacity: .45;
+  pointer-events:none;
+}
+
+/* slow down animation when user prefers reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .pingGrid > *::before{ animation: none; }
+}
+
+@keyframes lpSpin{
+  to { transform: rotate(360deg); }
+}
+
+/* optional: dim animation when not hovered to feel premium */
+.pingGrid > *::before{ opacity: .40; }
+.pingGrid > *:hover::before{ opacity: .80; }
+
+/* Down state (if your card has class "down" somewhere, we can key off it if present) */
+.pingGrid > *.down::before{
+  background: conic-gradient(from 0deg,
+    rgba(255,80,80,0.00),
+    rgba(255,80,80,0.95),
+    rgba(255,160,80,0.65),
+    rgba(255,80,80,0.00)
+  );
+}
+

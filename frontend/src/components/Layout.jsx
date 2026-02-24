@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+﻿import { NavLink, useNavigate } from "react-router-dom";
 import { getToken, clearToken } from "../auth";
 
 function getRoleFromToken(token){
@@ -105,8 +105,9 @@ const s = {
     cursor: "pointer", pointerEvents: "none", opacity: 0.6,
     fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontSize: 13, lineHeight: "16px",
   },
-  main: { flex: 1, padding: 18, minWidth: 0 },
+  main: { flex: 1, padding: 18, minWidth: 0, display: "flex", justifyContent: "center" },
 };
+
 
 
 
