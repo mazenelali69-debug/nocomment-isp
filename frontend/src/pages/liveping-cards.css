@@ -1,36 +1,84 @@
-﻿/* ===== Live Ping Cards v2 (auto) ===== */
+﻿/* ===== Live Ping Cards v3 (fit screen + centered) ===== */
 
-.pingGrid{
-  display:grid;
-  grid-template-columns:repeat(4,minmax(260px,1fr));
-  gap:16px;
+/* You can tweak this offset if needed (space taken by top bars / header). */
+:root{
+  --lp-offset: 240px;   /* reduce if you still see scroll; increase if content overlaps */
+  --lp-gap: 16px;
+  --lp-card-pad: 14px;
 }
 
-@media (max-width:1400px){ .pingGrid{ grid-template-columns:repeat(3,minmax(260px,1fr)); } }
-@media (max-width:1100px){ .pingGrid{ grid-template-columns:repeat(2,minmax(260px,1fr)); } }
-@media (max-width:720px){  .pingGrid{ grid-template-columns:1fr; } }
+/* Center the whole grid area nicely */
+.pingGrid{
+  width: min(1180px, calc(100vw - 80px)); /* keep it centered and not too wide */
+  margin: 0 auto;
+  display: grid;
+  gap: var(--lp-gap);
 
-/* Apply card styling to direct children (so we don't need to change your JSX cards) */
+  /* 4 columns on wide screens (8 cards => 2 rows) */
+  grid-template-columns: repeat(4, minmax(240px, 1fr));
+
+  /* Center content inside available area */
+  place-content: center;
+  align-content: center;
+
+  /* Try to fit into viewport (avoid scroll) */
+  min-height: calc(100vh - var(--lp-offset));
+}
+
+/* Responsive columns */
+@media (max-width: 1400px){
+  .pingGrid{ width: min(1040px, calc(100vw - 70px)); grid-template-columns: repeat(3, minmax(240px, 1fr)); }
+}
+@media (max-width: 1100px){
+  .pingGrid{ width: min(820px, calc(100vw - 60px)); grid-template-columns: repeat(2, minmax(240px, 1fr)); }
+}
+@media (max-width: 720px){
+  .pingGrid{ width: calc(100vw - 36px); grid-template-columns: 1fr; min-height: auto; }
+}
+
+/* Card base style (applies to any direct child) */
 .pingGrid > *{
-  position:relative;
-  border-radius:18px;
-  padding:16px 16px 14px;
+  position: relative;
+  border-radius: 18px;
+  padding: var(--lp-card-pad);
   background:
     radial-gradient(1200px 400px at 20% -10%, rgba(60,140,255,0.18), transparent 55%),
     linear-gradient(180deg, rgba(15,24,44,0.92), rgba(10,16,30,0.92));
-  border:1px solid rgba(255,255,255,0.08);
-  box-shadow:0 14px 34px rgba(0,0,0,0.55);
-  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-  overflow:hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.55);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  overflow: hidden;
 }
 
+/* Fit height: assume 2 rows when 4 columns (8 cards total) */
+@media (min-width: 1101px){
+  .pingGrid > *{
+    height: calc((100vh - var(--lp-offset) - var(--lp-gap)) / 2);
+  }
+}
+
+/* Fit height: 3 columns means 3 rows for 8 cards */
+@media (max-width: 1400px) and (min-width: 1101px){
+  .pingGrid > *{
+    height: calc((100vh - var(--lp-offset) - (var(--lp-gap) * 2)) / 3);
+  }
+}
+
+/* Fit height: 2 columns means 4 rows for 8 cards */
+@media (max-width: 1100px) and (min-width: 721px){
+  .pingGrid > *{
+    height: calc((100vh - var(--lp-offset) - (var(--lp-gap) * 3)) / 4);
+  }
+}
+
+/* Hover */
 .pingGrid > *:hover{
-  transform:translateY(-4px);
-  box-shadow:0 20px 44px rgba(0,0,0,0.65);
-  border-color:rgba(255,255,255,0.14);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 44px rgba(0,0,0,0.65);
+  border-color: rgba(255,255,255,0.14);
 }
 
-/* Small shine */
+/* Shine */
 .pingGrid > *::after{
   content:"";
   position:absolute;
@@ -46,39 +94,34 @@
 }
 .pingGrid > *:hover::after{ opacity:.55; }
 
-/* Try to make text inside look nicer without knowing exact markup */
+/* Make internal text a bit tighter so content fits */
+.pingGrid > *{
+  font-size: 12px;
+}
 .pingGrid > * h1,
 .pingGrid > * h2,
-.pingGrid > * h3,
-.pingGrid > * .title,
-.pingGrid > * .name{
-  color:rgba(255,255,255,0.92);
-  letter-spacing:.2px;
+.pingGrid > * h3{
+  font-size: 14px;
+  margin: 0;
 }
 
-.pingGrid > * .ip,
-.pingGrid > * .address,
-.pingGrid > * small{
-  color:rgba(255,255,255,0.55);
-  font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+/* Optional: if your card contains many rows, reduce vertical spacing */
+.pingGrid > * *{
+  line-height: 1.15;
 }
 
+/* Pills/badges look nicer */
 .pingGrid > * .badge,
 .pingGrid > * .status,
 .pingGrid > * .pill{
   display:inline-flex;
   align-items:center;
   gap:8px;
-  padding:6px 10px;
+  padding:5px 9px;
   border-radius:999px;
   background:rgba(255,255,255,0.06);
   border:1px solid rgba(255,255,255,0.10);
-  font-size:12px;
+  font-size:11px;
   color:rgba(255,255,255,0.85);
   white-space:nowrap;
-}
-
-/* Optional: if your UI prints ONLINE/DOWN text, make it pop a bit */
-.pingGrid > *:has(*:is(span,div,p):not(:empty)){
-  /* no-op placeholder to keep modern selectors grouped */
 }
