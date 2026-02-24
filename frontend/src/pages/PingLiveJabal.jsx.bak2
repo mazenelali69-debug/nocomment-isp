@@ -1,0 +1,696 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getToken } from "../auth";
+
+const TARGETS = [
+  { name: "Mimosa C5C IN Station", ip: "88.88.88.249" },
+  { name: "Mimosa C5C Jabal", ip: "88.88.88.250" },
+  { name: "RBGr3 To Army", ip: "88.88.88.10" },
+  { name: "RBGr3 IN Army", ip: "88.88.88.11" },
+  { name: "RBGr3 To Ghanem Market", ip: "88.88.88.12" },
+  { name: "RBGr3 To Dar", ip: "88.88.88.13" },
+  { name: "RB2011UiL Joy Land", ip: "88.88.88.15" },
+  { name: "SXT To WishMoney", ip: "88.88.88.22" },
+];
+
+const INTERVAL_MS = 2000;
+const N = 60;
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function fmtMs(v) { return v == null ? "--" : `${Math.round(v)} ms`; }
+
+function lossPct(samples) {
+  const xs = (samples || []).filter((x) => x && typeof x.ok === "boolean");
+  if (!xs.length) return null;
+  const lost = xs.filter((x) => !x.ok).length;
+  return Math.round((lost / xs.length) * 1000) / 10;
+}
+function avgMs(samples) {
+  const xs = (samples || []).map((x) => x?.ms).filter((v) => typeof v === "number" && isFinite(v));
+  if (!xs.length) return null;
+  return Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10;
+}
+function worstMs(samples) {
+  const xs = (samples || []).map((x) => x?.ms).filter((v) => typeof v === "number" && isFinite(v));
+  if (!xs.length) return null;
+  return Math.max(...xs);
+}
+function jitterMs(samples) {
+  const xs = (samples || []).map((x) => x?.ms).filter((v) => typeof v === "number" && isFinite(v));
+  if (xs.length < 2) return null;
+  let sum = 0, c = 0;
+  for (let i = 1; i < xs.length; i++) { sum += Math.abs(xs[i] - xs[i - 1]); c++; }
+  return c ? Math.round((sum / c) * 10) / 10 : null;
+}
+
+// quality width (better UX than linear ms)
+function qualityWidth(ms) {
+  if (ms == null) return 0;
+  const x = Number(ms);
+  if (!isFinite(x)) return 0;
+  if (x <= 40) return clamp(70 + (40 - x) * 0.75, 70, 100);
+  if (x <= 120) return clamp(70 - (x - 40) * (35 / 80), 35, 70);
+  return clamp(35 - (x - 120) * 0.15, 10, 35);
+}
+
+function bandLoss(p) {
+  if (p == null) return "neutral";
+  if (p <= 1) return "good";
+  if (p <= 5) return "warn";
+  return "bad";
+}
+function bandRtt(ms) {
+  if (ms == null) return "neutral";
+  if (ms <= 40) return "good";
+  if (ms <= 120) return "warn";
+  return "bad";
+}
+function bandJit(ms) {
+  if (ms == null) return "neutral";
+  if (ms <= 10) return "good";
+  if (ms <= 30) return "warn";
+  return "bad";
+}
+
+export default function PingLiveJabal() {
+  const token = getToken();
+
+  const headers = useMemo(() => {
+    const h = { "Content-Type": "application/json" };
+    if (token) h["Authorization"] = `Bearer ${token}`;
+    return h;
+  }, [token]);
+
+  const [authError, setAuthError] = useState(null);
+  const [sortMode, setSortMode] = useState("order"); // order | down | loss | rtt
+
+  const [rows, setRows] = useState(() =>
+    Object.fromEntries(
+      TARGETS.map((t) => [
+        t.ip,
+        {
+          name: t.name,
+          ip: t.ip,
+          ok: null,
+          ms: null,
+          ts: null,
+          samples: [],
+          err: null,
+          flash: 0,
+          changeTs: null,
+        },
+      ])
+    )
+  );
+
+  const timerRef = useRef(null);
+  const inFlightRef = useRef(false);
+
+  async function pingOne(t) {
+    const r = await fetch("${window.location.protocol}//${window.location.hostname}:8080/ping", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ip: t.ip }),
+    });
+
+    if (r.status === 401 || r.status === 403) {
+      const msg = "Invalid token. Please login again.";
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.message || `Ping failed (${r.status})`);
+
+    const ms = (d.ms ?? d.time ?? d.rtt);
+    const num = ms == null ? null : Number(ms);
+    if (!(typeof num === "number" && isFinite(num))) { throw new Error(d.message || "No RTT (offline?)"); } return { ok: true, ms: num };
+  }
+
+  async function tick() {
+    if (inFlightRef.current) return;
+    if (authError) return;
+
+    inFlightRef.current = true;
+    const now = Date.now();
+
+    const results = await Promise.all(
+      TARGETS.map(async (t) => {
+        try {
+          const out = await pingOne(t);
+          return { ip: t.ip, name: t.name, ...out, ts: now, err: null };
+        } catch (e) {
+          return { ip: t.ip, name: t.name, ok: false, ms: null, ts: now, err: e?.message || "Error" };
+        }
+      })
+    );
+
+    if (authError) { inFlightRef.current = false; return; }
+
+    setRows((prev) => {
+      const next = { ...prev };
+      for (const r of results) {
+        const p = prev[r.ip] || { name: r.name, ip: r.ip, samples: [] };
+        const samples = [...(p.samples || []), { ok: r.ok, ms: r.ms, ts: r.ts }].slice(-N);
+
+        const prevOk = p.ok;
+        const prevLoss = lossPct(p.samples || []);
+        const newLoss = lossPct(samples);
+
+        const shouldFlash =
+          (prevOk !== null && prevOk !== r.ok) ||
+          (prevLoss != null && newLoss != null && Math.abs(newLoss - prevLoss) >= 5) ||
+          (r.ok === false);
+
+        next[r.ip] = {
+          ...p,
+          name: r.name,
+          ip: r.ip,
+          ok: r.ok,
+          ms: r.ms,
+          ts: r.ts,
+          err: r.err && r.err.toLowerCase().includes("token") ? null : r.err,
+          samples,
+          flash: shouldFlash ? (p.flash || 0) + 1 : (p.flash || 0),
+          changeTs: shouldFlash ? now : (p.changeTs || null),
+        };
+      }
+      return next;
+    });
+
+    inFlightRef.current = false;
+  }
+
+  useEffect(() => {
+    setAuthError(null);
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    tick();
+    timerRef.current = setInterval(tick, INTERVAL_MS);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const list = Object.values(rows);
+
+  const online = list.filter((x) => x.ok === true).length;
+  const down = list.filter((x) => x.ok === false).length;
+  const wait = list.filter((x) => x.ok === null).length;
+
+  const allSamples = list.flatMap((x) => x.samples || []);
+  const avg = avgMs(allSamples);
+  const worst = worstMs(allSamples);
+  const loss = lossPct(allSamples);
+
+  const worstNow = useMemo(() => {
+    const xs = list.filter((x) => x && x.ok === true && typeof x.ms === "number" && isFinite(x.ms));
+    if (!xs.length) return null;
+    return xs.reduce((a, b) => (b.ms > a.ms ? b : a), xs[0]);
+  }, [list]);
+
+  const worstLossNode = useMemo(() => {
+    const xs = list
+      .map((x) => ({ ...x, _loss: lossPct(x.samples || []) }))
+      .filter((x) => x._loss != null);
+    if (!xs.length) return null;
+    return xs.reduce((a, b) => (b._loss > a._loss ? b : a), xs[0]);
+  }, [list]);
+
+  const sortedTargets = useMemo(() => {
+    const base = TARGETS.map((t) => ({ t, r: rows[t.ip] })).filter(Boolean);
+
+    if (sortMode === "order") return base.map((x) => x.t);
+
+    if (sortMode === "down") {
+      return base
+        .sort((a, b) => {
+          const ao = a.r?.ok === false ? 0 : a.r?.ok === null ? 1 : 2;
+          const bo = b.r?.ok === false ? 0 : b.r?.ok === null ? 1 : 2;
+          if (ao !== bo) return ao - bo;
+          const al = lossPct(a.r?.samples || []) ?? -1;
+          const bl = lossPct(b.r?.samples || []) ?? -1;
+          return (bl - al);
+        })
+        .map((x) => x.t);
+    }
+
+    if (sortMode === "loss") {
+      return base
+        .sort((a, b) => (lossPct(b.r?.samples || []) ?? -1) - (lossPct(a.r?.samples || []) ?? -1))
+        .map((x) => x.t);
+    }
+
+    // sortMode === "rtt"
+    return base
+      .sort((a, b) => (Number(b.r?.ms ?? -1) - Number(a.r?.ms ?? -1)))
+      .map((x) => x.t);
+  }, [rows, sortMode]);
+
+  const css = useMemo(() => `
+    @keyframes pulseRed {
+      0%, 100% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), 0 0 0 1px rgba(239,68,68,0.20) inset; }
+      50% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), 0 0 0 1px rgba(239,68,68,0.42) inset, 0 0 24px rgba(239,68,68,0.18); }
+    }
+    @keyframes flashEdge {
+      0% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), 0 0 0 1px rgba(59,130,246,0.55) inset, 0 0 28px rgba(59,130,246,0.18); }
+      100% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06); }
+    }
+    .noc-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(0,0,0,0.35); }
+    .noc-btn:active { transform: translateY(0px) scale(0.99); }
+    @media (max-width: 1180px) { .noc-grid { grid-template-columns: repeat(2, minmax(0,1fr)) !important; grid-template-rows: auto !important; overflow: auto !important; } }
+    @media (max-width: 720px) { .noc-grid { grid-template-columns: repeat(1, minmax(0,1fr)) !important; } .noc-topbar { flex-direction: column !important; align-items: flex-start !important; } .noc-summary { grid-template-columns: repeat(2, minmax(0,1fr)) !important; } }
+  `, []);
+
+  return (
+    <div style={s.page}>
+      <style>{css}</style>
+
+      <div style={s.inner}>
+        <div className="noc-topbar" style={s.topBar}>
+          <div style={s.brand}>
+            <div style={s.h1}>Live Ping Jabal</div>
+            <div style={s.h2}>NOC Pulse  RTT / Loss / Jitter  {INTERVAL_MS / 1000}s cadence</div>
+          </div>
+
+          <div style={s.actions}>
+            <div style={s.pill}><span style={s.pillDot} /> LIVE</div>
+
+            <div style={s.sortWrap}>
+              <div style={s.sortLabel}>Sort</div>
+              <div style={s.sortPills}>
+                <SortPill onClick={() => setSortMode("order")} active={sortMode === "order"}>Default</SortPill>
+                <SortPill onClick={() => setSortMode("down")} active={sortMode === "down"}>Down first</SortPill>
+                <SortPill onClick={() => setSortMode("loss")} active={sortMode === "loss"}>Worst loss</SortPill>
+                <SortPill onClick={() => setSortMode("rtt")} active={sortMode === "rtt"}>Highest RTT</SortPill>
+              </div>
+            </div>
+
+            <button className="noc-btn" onClick={tick} style={s.btnPrimary}>Run Check</button>
+          </div>
+        </div>
+
+        {authError ? (
+          <div style={s.banner}>
+            <div style={s.bannerTitle}>AUTH REQUIRED</div>
+            <div style={s.bannerText}>{authError}</div>
+          </div>
+        ) : null}
+
+        <div className="noc-summary" style={s.summaryRow}>
+          <SumCard k="Nodes" v={`${list.length}`} s={`${online} up  ${down} down  ${wait} wait`} band={down > 0 ? "bad" : online > 0 ? "good" : "neutral"} />
+          <SumCard k="Avg RTT" v={avg == null ? "--" : `${avg} ms`} s="Across window" band={bandRtt(avg)} />
+          <SumCard k="Worst RTT" v={worst == null ? "--" : `${worst} ms`} s={worstNow ? `${worstNow.name}` : "Across window"} band={bandRtt(worst)} />
+          <SumCard k="Loss" v={loss == null ? "--" : `${loss}%`} s={worstLossNode ? `Worst: ${worstLossNode.name}` : `Window N${N}`} band={bandLoss(loss)} />
+        </div>
+
+        <div className="noc-grid" style={s.grid}>
+          {sortedTargets.map((t) => (
+            <Card key={t.ip} item={rows[t.ip]} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortPill({ active, onClick, children }) {
+  return (
+    <button
+      className="noc-btn"
+      onClick={onClick}
+      style={{
+        ...s.sortPill,
+        ...(active ? s.sortPillOn : s.sortPillOff),
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SumCard({ k, v, s: sub, band }) {
+  const b = sBand[band] || sBand.neutral;
+  return (
+    <div style={{ ...s.sumCard, ...b.edge }}>
+      <div style={s.sumK}>{k}</div>
+      <div style={s.sumValue}>{v}</div>
+      <div style={s.sumS}>{sub}</div>
+    </div>
+  );
+}
+
+function Spark({ samples }) {
+  const xs = (samples || []).map((x) => x?.ms).filter((v) => typeof v === "number" && isFinite(v));
+  if (xs.length < 2) return null;
+
+  const w = 120, h = 28, pad = 2;
+  const min = Math.min(...xs);
+  const max = Math.max(...xs);
+  const span = Math.max(1, max - min);
+
+  const pts = xs.map((v, i) => {
+    const x = pad + (i * (w - pad * 2)) / (xs.length - 1);
+    const y = pad + (1 - (v - min) / span) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={s.spark}>
+      <polyline points={pts} fill="none" stroke="rgba(148,163,184,0.85)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <rect x="0.5" y="0.5" width={w - 1} height={h - 1} rx="8" ry="8" fill="none" stroke="rgba(255,255,255,0.08)" />
+    </svg>
+  );
+}
+
+function Card({ item }) {
+  const ok = item?.ok;
+  const status = ok === null ? "WAIT" : ok ? "ONLINE" : "DOWN";
+
+  const samples = item?.samples || [];
+  const loss = lossPct(samples);
+  const avg = avgMs(samples);
+  const jit = jitterMs(samples);
+  const last = item?.ts ? new Date(item.ts).toLocaleTimeString() : "-";
+
+  const lossB = bandLoss(loss);
+  const rttB = bandRtt(item?.ms);
+  const jitB = bandJit(jit);
+
+  const border = ok === null ? "neutral" : ok ? "good" : "bad";
+
+  const pulse = ok === false;
+  const flash = item?.changeTs && (Date.now() - item.changeTs) < 900;
+
+  const barW = qualityWidth(item?.ms);
+
+  return (
+    <div
+      style={{
+        ...s.card,
+        ...sBorder[border],
+        ...(pulse ? s.cardPulse : null),
+        ...(flash ? s.cardFlash : null),
+      }}
+    >
+      <div style={s.cardHead}>
+        <div style={s.titleWrap}>
+          <div style={s.title}>{item?.name}</div>
+          <div style={s.sub}>{item?.ip}</div>
+        </div>
+
+        <div style={s.statusWrap}>
+          <span style={{ ...s.statusDot, ...(ok === null ? sDot.neutral : ok ? sDot.good : sDot.bad) }} />
+          <span style={s.statusText}>{status}</span>
+        </div>
+      </div>
+
+      <div style={s.lane}>
+        <div style={s.laneTop}>
+          <div style={s.laneK}>QUALITY</div>
+          <div style={s.laneV}>{ok ? "ICMP ok" : ok === null ? "warming" : "drop"}</div>
+        </div>
+        <div style={s.laneBarOuter}>
+          <div style={{ ...s.laneBarInner, width: `${barW}%`, opacity: ok ? 1 : 0.45 }} />
+        </div>
+        <div style={s.sparkRow}>
+          <Spark samples={samples} />
+          <div style={s.sparkMeta}>
+            <div style={s.sparkMetaK}>Window</div>
+            <div style={s.sparkMetaV}>N={N}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={s.body}>
+        <div style={s.row}>
+          <div style={s.metricA}>
+            <div style={s.label}>RTT now</div>
+            <div style={s.big}>{ok ? fmtMs(item?.ms) : ok === null ? "..." : "DOWN"}</div>
+            <div style={{ ...s.chip, ...(sBand[rttB]?.chip || sBand.neutral.chip) }}>
+              {rttB === "neutral" ? "NO DATA" : rttB === "good" ? "FAST" : rttB === "warn" ? "OK" : "SLOW"}
+            </div>
+          </div>
+
+          <div style={s.metricB}>
+            <Mini k="Loss" v={loss == null ? "--" : `${loss}%`} band={lossB} />
+            <Mini k="Avg" v={avg == null ? "--" : `${avg} ms`} band={bandRtt(avg)} />
+            <Mini k="Jitter" v={jit == null ? "--" : `${jit} ms`} band={jitB} />
+            <div style={s.smallRow}>
+              <div style={s.k}>Last</div>
+              <div style={s.last}>{last}</div>
+            </div>
+          </div>
+        </div>
+
+        {item?.err ? <div style={s.err}>{item.err}</div> : null}
+
+        <div style={s.footerNote}>Auto-check every {INTERVAL_MS / 1000}s  Window N={N}</div>
+      </div>
+    </div>
+  );
+}
+
+function Mini({ k, v, band }) {
+  const b = sBand[band] || sBand.neutral;
+  return (
+    <div style={s.smallRow}>
+      <div style={s.k}>{k}</div>
+      <div style={{ ...s.valChip, ...b.chip }}>{v}</div>
+    </div>
+  );
+}
+
+const s = {
+  page: {
+    width: "100vw",
+    height: "100vh",
+    overflow: "hidden",
+    background:
+      "radial-gradient(1200px 600px at 20% 10%, rgba(59,130,246,0.18), transparent 60%)," +
+      "radial-gradient(900px 500px at 80% 20%, rgba(34,197,94,0.10), transparent 60%)," +
+      "linear-gradient(135deg,#020617,#0b1220)",
+    padding: 16,
+    boxSizing: "border-box",
+    fontFamily: "system-ui",
+    color: "white",
+  },
+
+  inner: {
+    height: "100%",
+    maxWidth: 1240,
+    margin: "0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    minHeight: 0,
+  },
+
+  topBar: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 },
+  brand: { minWidth: 0 },
+  h1: { fontSize: 22, fontWeight: 950, letterSpacing: 0.2 },
+  h2: { marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.72)", fontWeight: 800 },
+
+  actions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.05)",
+    fontWeight: 900,
+    letterSpacing: 0.4,
+    fontSize: 12,
+    backdropFilter: "blur(8px)",
+  },
+  pillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    background: "rgba(34,197,94,1)",
+    boxShadow: "0 0 16px rgba(34,197,94,0.9)",
+    display: "inline-block",
+  },
+
+  sortWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: "8px 10px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    backdropFilter: "blur(10px)",
+  },
+  sortLabel: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)", letterSpacing: 0.35 },
+  sortPills: { display: "flex", gap: 8, flexWrap: "wrap" },
+  sortPill: {
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    fontSize: 12,
+    fontWeight: 950,
+    letterSpacing: 0.25,
+    cursor: "pointer",
+    transition: "transform 120ms ease, box-shadow 120ms ease, background 120ms ease",
+  },
+  sortPillOn: { background: "rgba(59,130,246,0.16)", borderColor: "rgba(59,130,246,0.40)" },
+  sortPillOff: { background: "rgba(255,255,255,0.04)" },
+
+  btnPrimary: {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(59,130,246,0.55)",
+    background: "linear-gradient(180deg, rgba(59,130,246,0.22), rgba(59,130,246,0.10))",
+    color: "white",
+    fontWeight: 950,
+    cursor: "pointer",
+    boxShadow: "0 10px 24px rgba(0,0,0,0.25)",
+    transition: "transform 120ms ease, box-shadow 120ms ease",
+  },
+
+  banner: {
+    borderRadius: 16,
+    border: "1px solid rgba(239,68,68,0.35)",
+    background: "rgba(239,68,68,0.10)",
+    padding: "10px 12px",
+  },
+  bannerTitle: { fontWeight: 950, letterSpacing: 0.4, fontSize: 12, color: "rgba(254,202,202,0.98)" },
+  bannerText: { marginTop: 4, fontWeight: 850, fontSize: 12, color: "rgba(254,202,202,0.92)" },
+
+  summaryRow: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 },
+
+  sumCard: {
+    borderRadius: 18,
+    padding: 12,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(180deg, rgba(15,23,42,0.72), rgba(2,6,23,0.72))",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)",
+    backdropFilter: "blur(10px)",
+  },
+  sumK: { fontSize: 11, fontWeight: 900, color: "rgba(148,163,184,0.95)", letterSpacing: 0.35 },
+  sumValue: { marginTop: 6, fontSize: 22, fontWeight: 950 },
+  sumS: { marginTop: 4, fontSize: 11, fontWeight: 850, color: "rgba(226,232,240,0.72)" },
+
+  grid: {
+    flex: 1,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+    gap: 12,
+    overflow: "hidden",
+  },
+
+  card: {
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(180deg, rgba(15,23,42,0.88), rgba(2,6,23,0.88))",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    transition: "transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease",
+  },
+  cardPulse: { animation: "pulseRed 1.2s ease-in-out infinite" },
+  cardFlash: { animation: "flashEdge 900ms ease-out 1" },
+
+  cardHead: {
+    padding: 12,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    background: "linear-gradient(90deg, rgba(59,130,246,0.08), transparent 60%)",
+  },
+
+  titleWrap: { minWidth: 0 },
+  title: { fontWeight: 950, fontSize: 13, letterSpacing: 0.2, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  sub: { marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.72)", fontWeight: 850, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+
+  statusWrap: { display: "inline-flex", alignItems: "center", gap: 8 },
+  statusDot: { width: 10, height: 10, borderRadius: 999, display: "inline-block" },
+  statusText: { fontSize: 12, fontWeight: 950, letterSpacing: 0.35, color: "rgba(226,232,240,0.92)" },
+
+  lane: { padding: "10px 12px 0 12px" },
+  laneTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  laneK: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)", letterSpacing: 0.4 },
+  laneV: { fontSize: 11, fontWeight: 950, color: "rgba(226,232,240,0.86)" },
+  laneBarOuter: { height: 10, borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)", overflow: "hidden" },
+  laneBarInner: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, rgba(34,197,94,0.75), rgba(59,130,246,0.85))",
+    filter: "drop-shadow(0 0 10px rgba(59,130,246,0.35))",
+    transition: "width 220ms ease",
+  },
+
+  sparkRow: { marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  spark: { opacity: 0.95 },
+  sparkMeta: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 },
+  sparkMetaK: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)" },
+  sparkMetaV: { fontSize: 11, fontWeight: 950, color: "rgba(226,232,240,0.86)" },
+
+  body: { padding: 12, display: "flex", flexDirection: "column", gap: 10, minHeight: 0 },
+  row: { display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 10 },
+  metricA: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 },
+  label: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)", letterSpacing: 0.35 },
+  big: { fontSize: 22, fontWeight: 950, letterSpacing: 0.2 },
+  chip: { alignSelf: "flex-start", padding: "7px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.10)", fontSize: 12, fontWeight: 950, letterSpacing: 0.35, backdropFilter: "blur(10px)" },
+
+  metricB: { flex: 1, display: "flex", flexDirection: "column", gap: 8, paddingLeft: 10, borderLeft: "1px solid rgba(255,255,255,0.08)", minWidth: 0 },
+  smallRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  k: { color: "rgba(148,163,184,0.95)", fontWeight: 900, fontSize: 12 },
+  valChip: { padding: "6px 9px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.10)", fontSize: 12, fontWeight: 950, letterSpacing: 0.35, minWidth: 78, textAlign: "center" },
+  last: { fontSize: 12, fontWeight: 950, color: "rgba(226,232,240,0.92)" },
+
+  err: { padding: 10, borderRadius: 14, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.28)", color: "rgba(254,202,202,0.95)", fontSize: 12, fontWeight: 850 },
+  footerNote: { marginTop: 2, fontSize: 11, fontWeight: 850, color: "rgba(226,232,240,0.62)" },
+};
+
+const sDot = {
+  good: { background: "rgba(34,197,94,1)", boxShadow: "0 0 16px rgba(34,197,94,0.8)" },
+  bad: { background: "rgba(239,68,68,1)", boxShadow: "0 0 16px rgba(239,68,68,0.8)" },
+  neutral: { background: "rgba(148,163,184,1)", boxShadow: "0 0 14px rgba(148,163,184,0.6)" },
+};
+
+const sBorder = {
+  good: { borderColor: "rgba(34,197,94,0.55)" },
+  bad: { borderColor: "rgba(239,68,68,0.60)" },
+  neutral: { borderColor: "rgba(148,163,184,0.28)" },
+};
+
+const sBand = {
+  good: {
+    chip: { background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.35)", color: "rgba(187,247,208,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(34,197,94,0.18) inset" },
+  },
+  warn: {
+    chip: { background: "rgba(234,179,8,0.10)", border: "1px solid rgba(234,179,8,0.35)", color: "rgba(254,240,138,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(234,179,8,0.16) inset" },
+  },
+  bad: {
+    chip: { background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.35)", color: "rgba(254,202,202,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(239,68,68,0.18) inset" },
+  },
+  neutral: {
+    chip: { background: "rgba(148,163,184,0.10)", border: "1px solid rgba(148,163,184,0.30)", color: "rgba(226,232,240,0.90)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(148,163,184,0.10) inset" },
+  },
+};
+
+
+
+

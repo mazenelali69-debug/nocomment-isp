@@ -1,0 +1,382 @@
+import { useEffect, useMemo, useState } from "react";
+import { getToken } from "../auth";
+
+const API = "${window.location.protocol}//${window.location.hostname}:8080";
+
+function decodeRole(token){
+  if(!token) return null;
+  try{
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload?.role || null;
+  }catch{ return null; }
+}
+
+async function api(path, opts = {}) {
+  const token = getToken();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(opts.headers || {}),
+    ...(token ? { Authorization: "Bearer " + token } : {}),
+  };
+
+  const r = await fetch(API + path, { ...opts, headers });
+  const text = await r.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+  if (!r.ok) {
+    const msg = (data && (data.message || data.error)) || text || ("HTTP " + r.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export default function UserManager() {
+  const token = getToken();
+  const role = decodeRole(token);
+
+  
+  const nav = useNavigate();
+const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const [q, setQ] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+
+  const [newU, setNewU] = useState("");
+  const [newP, setNewP] = useState("");
+  const [newR, setNewR] = useState("user");
+
+  const [editId, setEditId] = useState(null);
+  const [editU, setEditU] = useState("");
+  const [editP, setEditP] = useState("");
+  const [editR, setEditR] = useState("user");
+
+  async function load() {
+    setErr("");
+    setLoading(true);
+    try {
+      const data = await api("/users", { method: "GET" });
+      setUsers(Array.isArray(data.users) ? data.users : []);
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => {
+    const s = (q || "").trim().toLowerCase();
+    return users.filter(u => {
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (!s) return true;
+      return String(u.username || "").toLowerCase().includes(s) || String(u.role || "").toLowerCase().includes(s) || String(u.id).includes(s);
+    });
+  }, [users, q, roleFilter]);
+
+  function beginEdit(u){
+    setEditId(u.id);
+    setEditU(u.username || "");
+    setEditR(u.role || "user");
+    setEditP("");
+    setErr("");
+  }
+
+  function cancelEdit(){
+    setEditId(null);
+    setEditU("");
+    setEditP("");
+    setEditR("user");
+    setErr("");
+  }
+
+  async function createUser(){
+    setErr("");
+    const username = (newU || "").trim();
+    const password = String(newP || "");
+    const r = String(newR || "user");
+
+    if(username.length < 3) return setErr("Username ???? ???? 3 ???? ?? ????.");
+    if(password.length < 4) return setErr("Password ???? ???? 4 ???? ?? ????.");
+
+    setBusy(true);
+    try{
+      await api("/users", { method:"POST", body: JSON.stringify({ username, password, role: r }) });
+      setNewU(""); setNewP(""); setNewR("user");
+      await load();
+      nav("/dashboard", { replace: true });    }catch(e){
+      setErr(String(e.message || e));
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  async function saveEdit(){
+    setErr("");
+    if(editId == null) return;
+
+    const payload = {};
+    const username = (editU || "").trim();
+    const password = String(editP || "");
+    const r = String(editR || "");
+
+    if(username.length < 3) return setErr("Username ???? ???? 3 ???? ?? ????.");
+    payload.username = username;
+
+    if(r !== "admin" && r !== "user") return setErr("Role ???? ???? admin ?? user.");
+    payload.role = r;
+
+    if(password){
+      if(password.length < 4) return setErr("Password ???? ???? 4 ???? ?? ????.");
+      payload.password = password;
+    }
+
+    setBusy(true);
+    try{
+      await api("/users/"+editId, { method:"PUT", body: JSON.stringify(payload) });
+      cancelEdit();
+      await load();
+      nav("/dashboard", { replace: true });    }catch(e){
+      setErr(String(e.message || e));
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  async function delUser(id){
+    setErr("");
+    if(!confirm("Delete user id="+id+" ?")) return;
+    setBusy(true);
+    try{
+      await api("/users/"+id, { method:"DELETE" });
+      await load();
+    }catch(e){
+      setErr(String(e.message || e));
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  const canManage = role === "admin";
+
+  return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <div>
+          <div style={s.title}>User Manager</div>
+          <div style={s.sub}>Manage accounts (admin only). Backend: <span style={s.mono}>{API}</span></div>
+        </div>
+
+        <div style={s.pills}>
+          <span style={{...s.pill, ...(canManage ? s.pillOk : s.pillBad)}}>
+            {canManage ? "ADMIN" : "NO ACCESS"}
+          </span>
+          <button onClick={load} disabled={loading || busy} style={s.btnSoft}>
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {!canManage && (
+        <div style={s.bannerBad}>
+          You are not admin. Login with an admin account to manage users.
+        </div>
+      )}
+
+      {err && <div style={s.bannerErr}>{err}</div>}
+
+      <div style={s.grid}>
+        <div style={s.card}>
+          <div style={s.cardHead}>
+            <div style={s.cardTitle}>Users</div>
+            <div style={s.filters}>
+              <input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Search username / role / id..." style={s.input} />
+              <select value={roleFilter} onChange={(e)=>setRoleFilter(e.target.value)} style={s.select}>
+                <option value="all">All roles</option>
+                <option value="admin">Admin</option>
+                <option value="user">User</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={s.tableWrap}>
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>ID</th>
+                  <th style={s.th}>Username</th>
+                  <th style={s.th}>Role</th>
+                  <th style={{...s.th, textAlign:"right"}}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(u => {
+                  const editing = editId === u.id;
+                  return (
+                    <tr key={u.id}>
+                      <td style={s.td}><span style={s.mono}>{u.id}</span></td>
+
+                      <td style={s.td}>
+                        {editing ? (
+                          <input value={editU} onChange={(e)=>setEditU(e.target.value)} style={s.input2} />
+                        ) : (
+                          <span style={s.user}>{u.username}</span>
+                        )}
+                      </td>
+
+                      <td style={s.td}>
+                        {editing ? (
+                          <select value={editR} onChange={(e)=>setEditR(e.target.value)} style={s.select2}>
+                            <option value="admin">admin</option>
+                            <option value="user">user</option>
+                          </select>
+                        ) : (
+                          <span style={{...s.badge, ...(u.role === "admin" ? s.badgeAdmin : s.badgeUser)}}>{u.role}</span>
+                        )}
+                      </td>
+
+                      <td style={{...s.td, textAlign:"right"}}>
+                        {!canManage ? (
+                          <span style={s.dim}></span>
+                        ) : editing ? (
+                          <div style={s.rowActions}>
+                            <input
+                              value={editP}
+                              onChange={(e)=>setEditP(e.target.value)}
+                              placeholder="New password (optional)"
+                              type="password"
+                              style={{...s.input2, width: 210}}
+                            />
+                            <button onClick={saveEdit} disabled={busy} style={s.btnPrimary}>Save</button>
+                            <button onClick={cancelEdit} disabled={busy} style={s.btnSoft}>Cancel</button>
+                          </div>
+                        ) : (
+                          <div style={s.rowActions}>
+                            <button onClick={()=>beginEdit(u)} disabled={busy} style={s.btnSoft}>Edit</button>
+                            <button onClick={()=>delUser(u.id)} disabled={busy} style={s.btnDanger}>Delete</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {!filtered.length && (
+                  <tr>
+                    <td style={s.td} colSpan={4}>
+                      <div style={s.empty}>
+                        {loading ? "Loading..." : "No users found."}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={s.card}>
+          <div style={s.cardHead}>
+            <div style={s.cardTitle}>Create User</div>
+            <div style={s.cardHint}>Fast add. Password is hashed in backend.</div>
+          </div>
+
+          <div style={{display:"grid", gap:10, padding: 14}}>
+            <label style={s.lbl}>
+              Username
+              <input value={newU} onChange={(e)=>setNewU(e.target.value)} placeholder="e.g. support01" style={s.input2} disabled={!canManage || busy}/>
+            </label>
+
+            <label style={s.lbl}>
+              Password
+              <input value={newP} onChange={(e)=>setNewP(e.target.value)} placeholder="min 4 chars" type="password" style={s.input2} disabled={!canManage || busy}/>
+            </label>
+
+            <label style={s.lbl}>
+              Role
+              <select value={newR} onChange={(e)=>setNewR(e.target.value)} style={s.select2} disabled={!canManage || busy}>
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+
+            <button onClick={createUser} disabled={!canManage || busy} style={s.btnPrimaryBig}>
+              {busy ? "Working..." : "Create user"}
+            </button>
+
+            <div style={s.tip}>
+              Tip: You can't delete the last admin (backend safety).
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const s = {
+  page: { padding: 12, display: "grid", gap: 12, color: "white" },
+  header: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+    padding: 14, borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(135deg, rgba(2,6,23,0.86), rgba(2,10,30,0.62))",
+    boxShadow: "0 20px 60px rgba(0,0,0,.35)",
+  },
+  title: { fontSize: 18, fontWeight: 950, letterSpacing: 0.2 },
+  sub: { marginTop: 4, fontSize: 12, fontWeight: 800, color: "rgba(148,163,184,0.95)" },
+  mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+
+  pills: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  pill: { padding: "7px 10px", borderRadius: 999, fontWeight: 950, fontSize: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.05)" },
+  pillOk: { border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.10)" },
+  pillBad: { border: "1px solid rgba(239,68,68,0.35)", background: "rgba(239,68,68,0.10)" },
+
+  bannerErr: { padding: 12, borderRadius: 16, border: "1px solid rgba(239,68,68,0.35)", background: "rgba(239,68,68,0.10)", color: "rgba(254,202,202,0.95)", fontWeight: 900, fontSize: 12, whiteSpace: "pre-wrap" },
+  bannerBad: { padding: 12, borderRadius: 16, border: "1px solid rgba(245,158,11,0.30)", background: "rgba(245,158,11,0.10)", color: "rgba(254,215,170,0.95)", fontWeight: 900, fontSize: 12 },
+
+  grid: { display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12 },
+  card: { borderRadius: 18, border: "1px solid rgba(255,255,255,0.10)", background: "linear-gradient(135deg, rgba(2,6,23,0.78), rgba(2,10,30,0.52))", boxShadow: "0 20px 60px rgba(0,0,0,.35)", overflow: "hidden" },
+  cardHead: { padding: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 },
+  cardTitle: { fontWeight: 950, letterSpacing: 0.2 },
+  cardHint: { fontSize: 12, fontWeight: 850, color: "rgba(148,163,184,0.95)" },
+
+  filters: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
+
+  input: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "white", outline: "none", fontSize: 13, minWidth: 240 },
+  select: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "white", outline: "none", fontSize: 13 },
+
+  input2: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "white", outline: "none", fontSize: 13, boxSizing: "border-box" },
+  select2: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "white", outline: "none", fontSize: 13, boxSizing: "border-box" },
+
+  tableWrap: { padding: 12 },
+  table: { width: "100%", borderCollapse: "collapse" },
+  th: { textAlign: "left", fontSize: 12, color: "rgba(148,163,184,0.95)", padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,0.08)", fontWeight: 950 },
+  td: { padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontSize: 13, verticalAlign: "middle" },
+
+  user: { fontWeight: 950, letterSpacing: 0.2 },
+  badge: { display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, fontSize: 12, fontWeight: 950, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)" },
+  badgeAdmin: { border: "1px solid rgba(59,130,246,0.40)", background: "rgba(59,130,246,0.12)" },
+  badgeUser: { border: "1px solid rgba(148,163,184,0.22)", background: "rgba(148,163,184,0.08)" },
+
+  rowActions: { display: "inline-flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" },
+  btnSoft: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(148,163,184,0.25)", background: "rgba(148,163,184,0.08)", color: "white", fontWeight: 950, cursor: "pointer" },
+  btnPrimary: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(59,130,246,0.55)", background: "rgba(59,130,246,0.18)", color: "white", fontWeight: 950, cursor: "pointer" },
+  btnPrimaryBig: { padding: "12px 12px", borderRadius: 14, border: "1px solid rgba(59,130,246,0.55)", background: "rgba(59,130,246,0.18)", color: "white", fontWeight: 950, cursor: "pointer", marginTop: 4 },
+  btnDanger: { padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)", color: "white", fontWeight: 950, cursor: "pointer" },
+
+  empty: { padding: 18, textAlign: "center", color: "rgba(148,163,184,0.95)", fontWeight: 900 },
+  dim: { color: "rgba(148,163,184,0.7)" },
+  lbl: { display: "grid", gap: 6, fontSize: 12, fontWeight: 950, color: "rgba(148,163,184,0.95)" },
+  tip: { fontSize: 12, fontWeight: 850, color: "rgba(148,163,184,0.95)" },
+};
+
+
+
+
+
+
+

@@ -1,0 +1,597 @@
+﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { getToken } from "../auth";
+
+const POLL_MS = 1200;
+const N = 60;
+
+// NOTE: targets are enforced by backend allowlist + admin token (for non-local callers)
+const BOXES = [
+{ title: "WSN#Traffic", ip: "10.88.88.254", ifIndex: 49154, accent: "blue" },
+  { title: "Fidel Network#Traffic*Weirdish", ip: "10.88.88.254", ifIndex: 49157, accent: "green" },
+  { title: "Fidel Network#TrafficRB922", ip: "10.88.88.254", ifIndex: 49158, accent: "green" },
+  { title: "Fidel Network#Traffic*Sector", ip: "10.88.88.254", ifIndex: 49156, accent: "green" },
+  { title: "MimosaC5c#Ahmadkh", ip: "10.88.88.254", ifIndex: 49155, accent: "blue" },
+  { title: "RBHexs*Fiber*Rawda", ip: "10.88.88.254", ifIndex: 49161, accent: "green" },
+  { title: "Traffic THGV Live Now", ip: "10.88.88.254", ifIndex: 49162, accent: "green" },
+  { title: "Switsh Fiber Vlan1To Vlan2", ip: "10.88.88.254", ifIndex: 49156, accent: "green" },
+  { title: "PING 112.24.30.1", ip: "112.24.30.1", ping: true, accent: "blue" },
+  { title: "PING 112.24.30.4", ip: "112.24.30.4", ping: true, accent: "blue" }
+];
+
+function fmt(n) {
+  if (n == null || Number.isNaN(n)) return "--";
+  if (n >= 1000) return n.toFixed(0);
+  if (n >= 100) return n.toFixed(1);
+  return n.toFixed(2);
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function avg(values) {
+  const xs = (values || []).filter((v) => typeof v === "number" && isFinite(v));
+  if (!xs.length) return null;
+  return xs.reduce((a, b) => a + b, 0) / xs.length;
+}
+function maxv(values) {
+  const xs = (values || []).filter((v) => typeof v === "number" && isFinite(v));
+  if (!xs.length) return null;
+  return Math.max(...xs);
+}
+function lastNum(values) {
+  for (let i = (values?.length || 0) - 1; i >= 0; i--) {
+    const v = values[i];
+    if (typeof v === "number" && isFinite(v)) return v;
+  }
+  return null;
+}
+function bandRate(mbps) {
+  if (mbps == null) return "neutral";
+  if (mbps <= 50) return "good";
+  if (mbps <= 300) return "warn";
+  return "bad";
+}
+
+function Spark({ rx, tx }) {
+  const w = 168;
+  const h = 34;
+  const pad = 3;
+
+  const vals = [...(rx || []), ...(tx || [])].filter((v) => typeof v === "number" && isFinite(v));
+  if (vals.length < 2) return null;
+
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = Math.max(1e-6, max - min);
+
+  const mkPts = (xs) => {
+    const ys = (xs || []).map((v) => (typeof v === "number" && isFinite(v) ? v : null));
+    return ys.map((v, i) => {
+      const x = pad + (i * (w - pad * 2)) / Math.max(1, ys.length - 1);
+      const vv = v == null ? min : v;
+      const y = pad + (h - pad * 2) * (1 - (vv - min) / span);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  };
+
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={s.spark}>
+      <polyline points={mkPts(rx)} fill="none" stroke="rgba(59,130,246,0.90)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <polyline points={mkPts(tx)} fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" opacity="0.95" />
+      <rect x="0.5" y="0.5" width={w - 1} height={h - 1} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,0.08)" />
+    </svg>
+  );
+}
+
+function SumCard({ k, v, sub, band }) {
+  const b = sBand[band] || sBand.neutral;
+  return (
+    <div style={{ ...s.sumCard, ...b.edge }}>
+      <div style={s.sumK}>{k}</div>
+      <div style={s.sumValue}>{v}</div>
+      <div style={s.sumS}>{sub}</div>
+    </div>
+  );
+}
+
+function Card({ item }) {
+  const ok = item?.ok;
+  const status = ok === null ? "WAIT" : ok ? "LIVE" : "ERROR";
+
+  const rxNow = lastNum(item?.rx);
+  const txNow = lastNum(item?.tx);
+
+  const border = ok === null ? "neutral" : ok ? "good" : "bad";
+  const pulse = ok === false;
+
+  const headGlow = item?.accent === "blue" ? "rgba(59,130,246,0.14)" : "rgba(34,197,94,0.10)";
+  const headBg = `linear-gradient(90deg, ${headGlow}, transparent 60%)`;
+
+  const bandRx = bandRate(rxNow);
+  const bandTx = bandRate(txNow);
+
+  const barW = (v) => {
+    if (v == null) return 0;
+    const w = 15 + (clamp(v, 0, 300) / 300) * 85;
+    return clamp(w, 10, 100);
+  };
+
+  return (
+    <div style={{ ...s.card, ...sBorder[border], ...(pulse ? s.cardPulse : null) }}>
+      <div style={{ ...s.cardHead, background: headBg }}>
+        <div style={s.titleWrap}>
+          <div style={s.title}>{item?.title}</div>
+          <div style={s.sub}></div>
+        </div>
+
+        <div style={s.statusWrap}>
+          <span style={{ ...s.statusDot, ...(ok === null ? sDot.neutral : ok ? sDot.good : sDot.bad) }} />
+          <span style={s.statusText}>{status}</span>
+        </div>
+      </div>
+
+      <div style={s.lane}>
+        <div style={s.laneTop}>
+          <div style={s.laneK}>{item?.ping ? "PING" : "RATE"}</div>
+          <div style={s.laneV}>{item?.ping ? "" : "RX / TX"}</div>
+        </div>
+
+        <div style={s.rateRow}>
+          <div style={s.rateLine}>
+            <div style={s.rateK}>RX</div>
+            <div style={{ ...s.rateChip, ...(sBand[bandRx]?.chip || sBand.neutral.chip) }}>
+              {fmt(rxNow)} <span style={s.rateUnit}>{item?.ping ? "ms" : "Mbps"}</span>
+            </div>
+          </div>
+          <div style={{ ...s.rateLine, ...(item?.ping ? { visibility: "hidden" } : null) }}>
+            <div style={s.rateK}>TX</div>
+            <div style={{ ...s.rateChip, ...(sBand[bandTx]?.chip || sBand.neutral.chip) }}>
+              {fmt(txNow)} <span style={s.rateUnit}>{item?.ping ? "ms" : "Mbps"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={s.laneBarOuter}>
+          <div style={{ ...s.laneBarInner, width: `${barW(rxNow)}%`, opacity: ok ? 1 : 0.45 }} />
+          <div style={{ ...s.laneBarInner2, width: `${barW(txNow)}%`, opacity: ok ? 0.95 : 0.35 }} />
+        </div>
+
+        <div style={s.sparkRow}>
+          <Spark rx={item?.rx} tx={item?.tx} />
+          <div style={s.sparkMeta}>
+            <div style={s.sparkMetaK}>Last</div>
+            <div style={s.sparkMetaV}>{item?.last || "-"}</div>
+          </div>
+        </div>
+
+        {item?.err ? <div style={s.err}>API: {item.err}</div> : <div style={s.footerNote}>Auto-poll every {POLL_MS / 1000}s  Window N={N}</div>}
+      </div>
+    </div>
+  );
+}
+
+export default function TrafficReseller() {
+  const token = getToken();
+
+  const headers = useMemo(() => {
+    const h = { "Content-Type": "application/json" };
+    if (token) h["Authorization"] = `Bearer ${token}`;
+    return h;
+  }, [token]);
+
+  const [authError, setAuthError] = useState(null);
+
+  const [rows, setRows] = useState(() =>
+    Object.fromEntries(
+      BOXES.map((b) => [
+        b.ip + "|" + b.title,
+        { ...b, ok: null, rx: [], tx: [], last: "", err: null },
+      ])
+    )
+  );
+
+  const timerRef = useRef(null);
+  const inFlightRef = useRef(false);
+
+  async function fetchOne(b, now) {
+    if (b.ping) {
+      const res = await fetch(`${window.location.protocol}//${window.location.hostname}:8080/ping`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ip: b.ip }),
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        const msg = "Auth required (admin). Please login again.";
+        setAuthError(msg);
+        throw new Error(msg);
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.message || data.error || `Failed (${res.status})`);
+
+      const msNow = isFinite(Number(data.ms)) ? Number(data.ms) : null;
+      const up = data.up === true;
+
+      return { ok: up, rxNow: msNow, txNow: null, err: up ? null : "DOWN", last: new Date(now).toLocaleTimeString() };
+    }
+    const res = await fetch(`${window.location.protocol}//${window.location.hostname}:8080/mikrotik/traffic-rate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ip: b.ip, ifIndex: b.ifIndex ?? 5 }),
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      const msg = "Auth required (admin). Please login again.";
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.message || data.error || `Failed (${res.status})`);
+
+    const rxVal = data.rx_mbps ?? data.rx ?? data.rxMbps ?? data.rx_rate ?? data.RX ?? null;
+    const txVal = data.tx_mbps ?? data.tx ?? data.txMbps ?? data.tx_rate ?? data.TX ?? null;
+
+    const rxNow = isFinite(Number(rxVal)) ? Number(rxVal) : null;
+    const txNow = isFinite(Number(txVal)) ? Number(txVal) : null;
+
+    return { ok: true, rxNow, txNow, err: null, last: new Date(now).toLocaleTimeString() };
+  }
+
+  async function tick() {
+    if (inFlightRef.current) return;
+    if (authError) return;
+    inFlightRef.current = true;
+
+    const now = Date.now();
+
+    const results = await Promise.all(
+      BOXES.map(async (b) => {
+        try {
+          const out = await fetchOne(b, now);
+          return { key: b.ip + "|" + b.title, ...out };
+        } catch (e) {
+          return {
+            key: b.ip + "|" + b.title,
+            ok: false,
+            rxNow: null,
+            txNow: null,
+            err: e?.message || "Error",
+            last: new Date(now).toLocaleTimeString(),
+          };
+        }
+      })
+    );
+
+    if (authError) { inFlightRef.current = false; return; }
+
+    setRows((prev) => {
+      const next = { ...prev };
+      for (const r of results) {
+        const p = prev[r.key] || {};
+        next[r.key] = {
+          ...p,
+          ok: r.ok,
+          rx: [...(p.rx || []), r.rxNow].slice(-N),
+          tx: [...(p.tx || []), r.txNow].slice(-N),
+          err: r.err && String(r.err).toLowerCase().includes("token") ? null : r.err,
+          last: r.last,
+        };
+      }
+      return next;
+    });
+
+    inFlightRef.current = false;
+  }
+
+  useEffect(() => {
+    setAuthError(null);
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    tick();
+    timerRef.current = setInterval(tick, POLL_MS);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const list = Object.values(rows);
+const trafficList = list.filter((x) => !x.ping);
+const pingList = list.filter((x) => x.ping);const okN = trafficList.filter((x) => x.ok === true).length;
+  const errN = trafficList.filter((x) => x.ok === false).length;
+  const waitN = trafficList.filter((x) => x.ok === null).length;
+
+  const allRx = trafficList.flatMap((x) => x.rx || []);
+  const allTx = trafficList.flatMap((x) => x.tx || []);
+
+  const rxAvg = avg(allRx);
+  const txAvg = avg(allTx);
+  const rxMax = maxv(allRx);
+  const txMax = maxv(allTx);
+
+  const css = useMemo(() => `
+    @keyframes pulseRed {
+      0%, 100% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), 0 0 0 1px rgba(239,68,68,0.20) inset; }
+      50% { box-shadow: 0 18px 44px rgba(0,0,0,0.42), 0 0 0 1px rgba(239,68,68,0.42) inset, 0 0 24px rgba(239,68,68,0.18); }
+    }
+    
+      .noc-topbar { flex-direction: column !important; align-items: flex-start !important; }
+      .noc-summary { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+    }
+  `, []);
+
+  return (
+    <div style={s.page}>
+      <style>{css}</style>
+
+      <div style={s.inner}>
+        <div className="noc-topbar" style={s.topBar}>
+          <div style={s.brand}>
+            <div style={s.h1}>Traffic Reseller</div>
+            <div style={s.h2}>Live Traffic RX/TX Mbps  {POLL_MS / 1000}s cadence</div>
+          </div>
+
+          <div style={s.actions}>
+            <div style={s.pill}><span style={s.pillDot} /> LIVE</div>
+          </div>
+        </div>
+
+        {authError ? (
+          <div style={s.banner}>
+            <div style={s.bannerTitle}>AUTH REQUIRED</div>
+            <div style={s.bannerText}>{authError}</div>
+          </div>
+        ) : null}
+
+        <div className="noc-summary" style={s.summaryRow}>
+  <SumCard k="Nodes" v={`${trafficList.length}`} sub={`${okN} ok  ${errN} err  ${waitN} wait`} band={errN > 0 ? "bad" : okN > 0 ? "good" : "neutral"} />
+  <SumCard k="Avg RX" v={rxAvg == null ? "--" : `${fmt(rxAvg)} Mbps`} sub="Across window" band={bandRate(rxAvg)} />
+  <SumCard k="Avg TX" v={txAvg == null ? "--" : `${fmt(txAvg)} Mbps`} sub="Across window" band={bandRate(txAvg)} />
+  <SumCard k="Peak" v={(rxMax == null && txMax == null) ? "--" : `${fmt(Math.max(rxMax ?? 0, txMax ?? 0))} Mbps`} sub={`RX max ${fmt(rxMax)}  TX max ${fmt(txMax)}`} band={bandRate(Math.max(rxMax ?? 0, txMax ?? 0))} />
+</div>
+
+<div style={s.belowRow}>
+  <div style={s.leftRail}>
+    {pingList.map((it) => (
+      <Card key={it.ip + "|" + it.title} item={it} />
+    ))}
+  </div>
+
+  <div className="noc-grid" style={s.grid}>
+    {trafficList.map((it) => (
+      <Card key={it.ip + "|" + it.title} item={it} />
+    ))}
+  </div>
+</div>
+      </div>
+    </div>
+  );
+}
+
+const s = {
+  page: {
+    width: "100%",
+    height: "100vh",
+    overflow: "hidden",
+    background:
+      "radial-gradient(1200px 600px at 20% 10%, rgba(59,130,246,0.18), transparent 60%)," +
+      "radial-gradient(900px 500px at 80% 20%, rgba(34,197,94,0.10), transparent 60%)," +
+      "linear-gradient(135deg,#020617,#0b1220)",
+    padding: 16, paddingRight: 24, boxSizing: "border-box",
+    fontFamily: "system-ui",
+    color: "white",
+  },
+
+  inner: {
+    height: "100%",
+    maxWidth: 1560,
+    margin: "0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    minHeight: 0,
+  },
+
+  topBar: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 },
+  brand: { minWidth: 0 },
+  h1: { fontSize: 22, fontWeight: 950, letterSpacing: 0.2 },
+  h2: { marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.70)", fontWeight: 800 },
+
+  actions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.05)",
+    fontWeight: 900,
+    letterSpacing: 0.4,
+    fontSize: 12,
+    backdropFilter: "blur(8px)",
+  },
+  pillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    background: "rgba(34,197,94,1)",
+    boxShadow: "0 0 16px rgba(34,197,94,0.9)",
+    display: "inline-block",
+  },
+
+  banner: {
+    borderRadius: 16,
+    border: "1px solid rgba(239,68,68,0.35)",
+    background: "rgba(239,68,68,0.10)",
+    padding: "10px 12px",
+  },
+  bannerTitle: { fontWeight: 950, letterSpacing: 0.4, fontSize: 12, color: "rgba(254,202,202,0.98)" },
+  bannerText: { marginTop: 4, fontWeight: 850, fontSize: 12, color: "rgba(254,202,202,0.92)" },
+
+  summaryRow: { display: "grid", gridTemplateColumns: "repeat(4, minmax(280px, 1fr))", gap: 10 },
+
+  sumCard: {
+    borderRadius: 18,
+    padding: 12,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(180deg, rgba(15,23,42,0.72), rgba(2,6,23,0.72))",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06)",
+    backdropFilter: "blur(10px)",
+  },
+  sumK: { fontSize: 11, fontWeight: 900, color: "rgba(148,163,184,0.95)", letterSpacing: 0.35 },
+  sumValue: { marginTop: 6, fontSize: 22, fontWeight: 950 },
+  sumS: { marginTop: 4, fontSize: 11, fontWeight: 850, color: "rgba(226,232,240,0.72)" },
+  grid: {
+flex: 1,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(280px, 1fr))",
+    gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+    gap: 12,
+    overflow: "hidden",
+  },
+
+  belowRow: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    gap: 12,
+    overflow: "hidden",
+  },
+
+  leftRail: {
+    width: 260,
+    minWidth: 260,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    overflow: "hidden",
+  },
+
+  card: {
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(180deg, rgba(15,23,42,0.88), rgba(2,6,23,0.88))",
+    boxShadow: "0 18px 44px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+  },
+  cardPulse: { animation: "pulseRed 1.2s ease-in-out infinite" },
+
+  cardHead: {
+    padding: 12,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+
+  titleWrap: { minWidth: 0 },
+  title: { fontWeight: 950, fontSize: 13, letterSpacing: 0.2, lineHeight: 1.2, whiteSpace: "normal", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" },
+  sub: { marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.70)", fontWeight: 850, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+
+  statusWrap: { display: "inline-flex", alignItems: "center", gap: 8 },
+  statusDot: { width: 10, height: 10, borderRadius: 999, display: "inline-block" },
+  statusText: { fontSize: 12, fontWeight: 950, letterSpacing: 0.35, color: "rgba(226,232,240,0.92)" },
+
+  lane: { padding: "10px 12px 12px 12px", display: "flex", flexDirection: "column", flex: 1 },
+  laneTop: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  laneK: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)", letterSpacing: 0.4 },
+  laneV: { fontSize: 11, fontWeight: 950, color: "rgba(226,232,240,0.85)" },
+
+  rateRow: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 8 },
+  rateLine: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flex: 1 , paddingRight: 10 },
+  rateK: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)" },
+  rateChip: { padding: "6px 9px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.10)", fontSize: 12, fontWeight: 950, letterSpacing: 0.2, minWidth: 98, textAlign: "center" },
+  rateUnit: { fontSize: 11, fontWeight: 900, color: "rgba(226,232,240,0.70)" },
+
+  laneBarOuter: { height: 12, borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)", overflow: "hidden", position: "relative" },
+  laneBarInner: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, rgba(59,130,246,0.85), rgba(59,130,246,0.20))",
+    filter: "drop-shadow(0 0 10px rgba(59,130,246,0.35))",
+    transition: "width 220ms ease",
+    position: "absolute",
+    left: 0,
+    top: 0,
+  },
+  laneBarInner2: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, rgba(34,197,94,0.75), rgba(34,197,94,0.18))",
+    filter: "drop-shadow(0 0 10px rgba(34,197,94,0.28))",
+    transition: "width 220ms ease",
+    position: "absolute",
+    left: 0,
+    top: 0,
+    mixBlendMode: "screen",
+  },
+
+  sparkRow: { marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  spark: { opacity: 0.95, display: "block" },
+  sparkMeta: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 },
+  sparkMetaK: { fontSize: 11, fontWeight: 950, color: "rgba(148,163,184,0.95)" },
+  sparkMetaV: { fontSize: 11, fontWeight: 950, color: "rgba(226,232,240,0.86)" },
+
+  footerNote: { marginTop: "auto", minHeight: 36, display: "flex", alignItems: "center", fontSize: 11, fontWeight: 850, color: "rgba(226,232,240,0.62)" },
+
+  err: { marginTop: "auto", minHeight: 36, padding: 10, borderRadius: 14, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.28)", color: "rgba(254,202,202,0.95)", fontSize: 12, fontWeight: 850, display: "flex", alignItems: "center" },
+};
+
+const sDot = {
+  good: { background: "rgba(34,197,94,1)", boxShadow: "0 0 16px rgba(34,197,94,0.8)" },
+  bad: { background: "rgba(239,68,68,1)", boxShadow: "0 0 16px rgba(239,68,68,0.8)" },
+  neutral: { background: "rgba(148,163,184,1)", boxShadow: "0 0 14px rgba(148,163,184,0.6)" },
+};
+
+const sBorder = {
+  good: { borderColor: "rgba(34,197,94,0.55)" },
+  bad: { borderColor: "rgba(239,68,68,0.60)" },
+  neutral: { borderColor: "rgba(148,163,184,0.28)" },
+};
+
+const sBand = {
+  good: {
+    chip: { background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.35)", color: "rgba(187,247,208,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(34,197,94,0.18) inset" },
+  },
+  warn: {
+    chip: { background: "rgba(234,179,8,0.10)", border: "1px solid rgba(234,179,8,0.35)", color: "rgba(254,240,138,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(234,179,8,0.16) inset" },
+  },
+  bad: {
+    chip: { background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.35)", color: "rgba(254,202,202,0.98)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(239,68,68,0.18) inset" },
+  },
+  neutral: {
+    chip: { background: "rgba(148,163,184,0.10)", border: "1px solid rgba(148,163,184,0.30)", color: "rgba(226,232,240,0.90)" },
+    edge: { boxShadow: "0 18px 44px rgba(0,0,0,0.34), 0 0 0 1px rgba(148,163,184,0.10) inset" },
+  },
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

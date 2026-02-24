@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "username": "nocomment",
+    "passwordHash": "$2b$10$OLaoVMnBlyxIckzM9qNw/.LrvV.IV0iMJ/OtlFMe3KvhZxuGg4x8K",
+    "role": "admin"
+  },
+  {
+    "id": 2,
+    "username": "davo",
+    "passwordHash": "$2b$10$kL62EPLjcdjJfbAbGywpPe1JdKckkQS/V17RfnOOHZGlP5qs2cO0G",
+    "role": "admin"
+  },
+  {
+    "id": 3,
+    "username": "sparta",
+    "passwordHash": "$2b$10$4o.rWtwfPMVr52x0gh27KOqXWfRn0Z5o32CqBKqVaBEtOBoB10RWa",
+    "role": "admin"
+  }
+]
