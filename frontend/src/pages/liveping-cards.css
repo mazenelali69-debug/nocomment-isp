@@ -87,24 +87,14 @@
   -webkit-mask-composite: xor;
   mask-composite: exclude;
 
-  opacity: .65;
+  opacity: .40;
   filter: blur(0.2px);
   animation: lpSpin 2.2s linear infinite;
   pointer-events:none;
 }
 
-/* subtle glow inside */
-.pingGrid > *::after{
-  content:"";
-  position:absolute;
-  inset:-40%;
-  background: radial-gradient(circle at 30% 20%, rgba(0,255,170,0.10), transparent 55%);
-  transform: translateZ(0);
-  opacity: .45;
-  pointer-events:none;
-}
+.pingGrid > *:hover::before{ opacity: .80; }
 
-/* slow down animation when user prefers reduced motion */
 @media (prefers-reduced-motion: reduce){
   .pingGrid > *::before{ animation: none; }
 }
@@ -113,11 +103,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* optional: dim animation when not hovered to feel premium */
-.pingGrid > *::before{ opacity: .40; }
-.pingGrid > *:hover::before{ opacity: .80; }
-
-/* Down state (if your card has class "down" somewhere, we can key off it if present) */
+/* Down state (if a card gets class 'down') */
 .pingGrid > *.down::before{
   background: conic-gradient(from 0deg,
     rgba(255,80,80,0.00),
@@ -126,4 +112,3 @@
     rgba(255,80,80,0.00)
   );
 }
-
