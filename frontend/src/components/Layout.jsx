@@ -84,7 +84,8 @@ const s = {
 
   logout: { marginTop: 14, padding: "10px 12px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.06)", color: "white", cursor: "pointer", fontWeight: 900, fontSize: 13 },
 
-  main: { flex: 1, display: "flex", justifyContent: "center", padding: 20 },
+  main: { flex: 1, display: "flex", justifyContent: "center", padding: 24 },
 
-  container: { width: "100%", maxWidth: 1400, margin: "0 auto" }
+  container: { width: "100%", maxWidth: 1800, margin: "0 auto" }
 };
+
