@@ -7,7 +7,7 @@ on:
     branches: [ "stable" ]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-$\{{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -51,7 +51,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
