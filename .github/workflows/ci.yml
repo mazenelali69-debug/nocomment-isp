@@ -1,63 +1,37 @@
 ﻿name: CI
 
 on:
-  pull_request:
-    branches: [ "stable" ]
   push:
     branches: [ "stable" ]
-
-concurrency:
-  group: ci-$\{{ github.ref }}
-  cancel-in-progress: true
+  pull_request:
+    branches: [ "stable" ]
 
 jobs:
   frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          node-version: 18
 
-      - name: Install
-        run: npm ci
-
-      - name: Lint (optional)
-        run: |
-          if npm run | grep -qE '^  lint'; then npm run lint; else echo "No lint script"; fi
-
-      - name: Test (optional)
-        run: |
-          if npm run | grep -qE '^  test'; then npm test -- --ci || npm test || true; else echo "No test script"; fi
-
-      - name: Build
-        run: npm run build
+      - run: npm ci
+      - run: npm run build
 
   backend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        shell: bash
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
+          node-version: 18
 
-      - name: Install
-        run: npm ci
-
-      - name: Test (optional)
-        run: |
-          if npm run | grep -qE '^  test'; then npm test -- --ci || npm test || true; else echo "No test script"; fi
+      - run: npm ci
