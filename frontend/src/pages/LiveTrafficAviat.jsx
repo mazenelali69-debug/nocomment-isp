@@ -1,5 +1,4 @@
-﻿import Layout from "../components/Layout.jsx";
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { getToken } from "../auth";
 /**
  * Production-ish Live Traffic dashboard:
@@ -668,6 +667,8 @@ useEffect(() => {
   );
 }
 
+const dock = false;
+
 const s = {
   page: {
     width: "100vw",
@@ -1030,11 +1031,14 @@ const s = {
 
 export default function LiveTrafficAviatPage(){
   return (
-    <Layout>
+    <>
       <LiveTrafficAviatInner />
-    </Layout>
+    </>
   );
 }
+
+
+
 
 
 

@@ -3,6 +3,8 @@
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import LivePing from "./pages/LivePing";
+
+import LiveTrafficAviat from "./pages/LiveTrafficAviat";
 import PingLiveJabal from "./pages/PingLiveJabal";
 import MonitoringGraphying from "./pages/MonitoringGraphying";
 import UserManager from "./pages/UserManager";
@@ -29,9 +31,11 @@ export default function App() {
         <Route path="/live-ping" element={<ProtectedLayout><LivePing /></ProtectedLayout>} />
         <Route path="/ping-live-jabal" element={<ProtectedLayout><PingLiveJabal /></ProtectedLayout>} />
         <Route path="/monitoring-graphying" element={<ProtectedLayout><MonitoringGraphying /></ProtectedLayout>} />
-        <Route path="/users" element={<ProtectedLayout><UserManager /></ProtectedLayout>} />
+        <Route path="/users" element={<ProtectedLayout><UserManager /></ProtectedLayout>} />        <Route path="/live-traffic-aviat" element={<ProtectedLayout><LiveTrafficAviat /></ProtectedLayout>} />
+
 
         <Route path="/traffic-reseller" element={<ProtectedLayout><TrafficReseller /></ProtectedLayout>} />
+        <Route path="/live-traffic-aviat" element={<ProtectedLayout><LiveTrafficAviat /></ProtectedLayout>} />
 
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
@@ -39,6 +43,9 @@ export default function App() {
     </BrowserRouter>
   );
 }
+
+
+
 
 
 

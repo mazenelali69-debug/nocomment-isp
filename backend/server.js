@@ -101,7 +101,7 @@ app.post("/auth/login", async (req, res) => {
   if (!ok) return res.status(401).json({ ok: false, message: "Invalid credentials" });
 
   const token = jwt.sign({ sub: u.id, username: u.username, role: u.role }, secret, { expiresIn:"7d" });
-  res.json({ ok: true, token });
+  res.json({ ok: true, token, role: u.role, user: { id: u.id, username: u.username, role: u.role } });
 });
 
 /* =============== SNMP TRAFFIC (bytes counters) =============== */
@@ -343,6 +343,8 @@ app.post("/mikrotik/interfaces", auth, (req,res)=>{
 registerUsersRoutes(app, { auth, requireAdmin, loadUsers, saveUsers, bcrypt });
 
 app.listen(8080, "0.0.0.0", () => console.log("Backend running on http://0.0.0.0:8080 (LAN/VPN ready)"));
+
+
 
 
 

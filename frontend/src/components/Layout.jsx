@@ -3,7 +3,21 @@ import { NavLink, useNavigate } from "react-router-dom";
 
 export default function Layout({ children }) {
   const navigate = useNavigate();
-  const role = (localStorage.getItem("role") || "").toLowerCase();
+  const token = localStorage.getItem("token") || "";
+
+const role = (() => {
+  const r = (localStorage.getItem("role") || "").toLowerCase();
+  if (r) return r;
+
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return "";
+    const payload = JSON.parse(atob(parts[1]));
+    return String(payload?.role || "").toLowerCase();
+  } catch {
+    return "";
+  }
+})();
 
   const logout = () => {
     try {
@@ -23,6 +37,7 @@ export default function Layout({ children }) {
           <NavLink to="/live-ping" style={({ isActive }) => (isActive ? s.linkActive : s.link)}>Ping Live THGV</NavLink>
           <NavLink to="/ping-live-jabal" style={({ isActive }) => (isActive ? s.linkActive : s.link)}>Ping Live Jabal</NavLink>
           <NavLink to="/monitoring-graphying" style={({ isActive }) => (isActive ? s.linkActive : s.link)}>Monitoring Live Traffic</NavLink>
+          <NavLink to="/live-traffic-aviat" style={({ isActive }) => (isActive ? s.linkActive : s.link)}>Live Traffic Aviat</NavLink>
           <NavLink to="/traffic-reseller" style={({ isActive }) => (isActive ? s.linkActive : s.link)}>Traffic Reseller</NavLink>
 
           {role === "admin" && (
@@ -88,5 +103,7 @@ const s = {
 
   container: { width: "100%", maxWidth: 1800, margin: "0" }
 };
+
+
 
 

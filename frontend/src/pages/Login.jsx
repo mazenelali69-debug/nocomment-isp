@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { setToken } from "../auth";
 
@@ -324,6 +324,10 @@ export default function Login() {
 
       if (!data?.token) throw new Error("No token returned");
       setToken(data.token);
+      try {
+        const role = String(data.role || data.user?.role || "");
+        if (role) localStorage.setItem("role", role);
+      } catch {}
       nav("/dashboard", { replace: true });
     } catch (e2) {
       console.log("LOGIN ERROR:", e2);
@@ -676,6 +680,7 @@ const s = {
     userSelect: "none",
   },
 };
+
 
 
 
