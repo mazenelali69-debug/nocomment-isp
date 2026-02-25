@@ -1,0 +1,14 @@
+﻿name: CD (Windows)
+
+on:
+  push:
+    branches: [ "stable" ]
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, windows, x64]
+    steps:
+      - name: Deploy on server
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/deploy-windows.ps1
